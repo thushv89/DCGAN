@@ -170,6 +170,12 @@ def update_discriminator_fulcon_in(fan_in):
             disc_hyparams[op]['in'] = fan_in
             break
 
+def lrelu(x, leak=0.2, name="lrelu"):
+     with tf.variable_scope(name):
+         f1 = 0.5 * (1 + leak)
+         f2 = 0.5 * (1 - leak)
+         return f1 * x + f2 * abs(x)
+
 def get_discriminator_output(dataset,is_train):
 
     # Variables.
@@ -182,7 +188,7 @@ def get_discriminator_output(dataset,is_train):
         if 'conv' in op:
             print('\tCovolving data (%s)'%op)
             x = tf.nn.conv2d(x, disc_weights[op], disc_hyparams[op]['stride'], padding=disc_hyparams[op]['padding'])
-            x = tf.nn.relu(x + disc_biases[op])
+            x = lrelu(x + disc_biases[op])
             print('\t\tX after %s:%s'%(op,x.get_shape().as_list()))
         if op=='loc_res_norm':
             print('\tLocal Response Normalization')
@@ -211,7 +217,7 @@ def get_discriminator_output(dataset,is_train):
             if is_train and use_dropout:
                 x = tf.nn.dropout(tf.nn.relu(tf.matmul(x,disc_weights[op])+disc_biases[op]),keep_prob=1.-dropout_rate,seed=tf.set_random_seed(12321))
             else:
-                x = tf.nn.relu(tf.matmul(x,disc_weights[op])+disc_biases[op])
+                x = lrelu(tf.matmul(x,disc_weights[op])+disc_biases[op])
 
     if use_dropout:
         x = tf.nn.dropout(x,1.0-dropout_rate,seed=tf.set_random_seed(98765))
@@ -308,9 +314,6 @@ if __name__=='__main__':
         max_test_accuracy = 0
 
         for epoch in range(num_epochs):
-
-
-
             for iteration in range(floor(float(train_size)/batch_size)):
                 offset = iteration * batch_size
                 assert offset < train_size
@@ -321,14 +324,14 @@ if __name__=='__main__':
 
                 gen_feed_dict = {tf_noise_dataset : z_data}
                 disc_feed_dict = {tf_dataset : batch_data, tf_noise_dataset : z_data}
-                _, gen_images, l, _ = session.run([gen_dataset,disc_gen_out,gen_loss,gen_optimize], feed_dict=gen_feed_dict)
-                _, l, _ = session.run([disc_real_out,disc_loss,disc_optimizer], feed_dict=disc_feed_dict)
+                _, gen_images, lg, _ = session.run([gen_dataset,disc_gen_out,gen_loss,gen_optimize], feed_dict=gen_feed_dict)
+                _, ld, _ = session.run([disc_real_out,disc_loss,disc_optimizer], feed_dict=disc_feed_dict)
 
                 if total_iterations % 50 == 0:
-                    print('Minibatch loss at epoch,iteration %d,%d: %f' % (epoch,iteration, l))
-                    print('Learning rate: %.5f'%updated_lr)
-                    print('Minibatch accuracy: %.1f%%' % accuracy(predictions, batch_labels))
+                    print('Minibatch GEN loss (%.3f) and DISC loss (%.3f) epoch,iteration %d,%d' % (lg,ld,epoch,iteration))
 
                 total_iterations += 1
+
+
 
 
