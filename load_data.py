@@ -13,13 +13,13 @@ from scipy.misc import imsave
 def load_and_save_data_cifar10(filename,**params):
 
     valid_size_required = 10000
-    cifar_file = '..'+os.sep+'data'+os.sep+filename
+    cifar_file = 'data'+os.sep+filename
 
     if os.path.exists(cifar_file):
         return
 
-    train_pickle_file = '..'+os.sep+'data'+os.sep+'cifar_10_data_batch_'
-    test_pickle_file = '..'+os.sep+'data' + os.sep + 'cifar_10_test_batch'
+    train_pickle_file = 'data'+os.sep+'cifar_10_data_batch_'
+    test_pickle_file = 'data' + os.sep + 'cifar_10_test_batch'
     train_raw = None
     test_dataset = None
     train_raw_labels = None
@@ -177,7 +177,7 @@ def reformat_data_cifar10(filename,**params):
     num_channels = 3 # rgb
 
     print("Reformatting data ...")
-    cifar10_file = '..'+os.sep+'data'+os.sep+filename
+    cifar10_file = 'data'+os.sep+filename
     with open(cifar10_file,'rb') as f:
         save = pickle.load(f)
         train_dataset, train_labels = save['train_dataset'],save['train_labels']
