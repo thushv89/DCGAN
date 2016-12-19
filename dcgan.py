@@ -10,6 +10,7 @@ import os
 
 
 epsilon = 1e-8
+bn_decay = 0.5
 loss_epsilon = 1e-8
 
 dataset_type = 'cifar-10'
@@ -26,8 +27,7 @@ else:
     raise NotImplementedError
 
 batch_size = 128
-num_epochs = 250
-start_lr = 0.2
+num_epochs = 100
 
 #dropout seems to be making it impossible to learn
 #maybe only works for large nets
@@ -38,7 +38,7 @@ use_dropout = False
 z_size = 100
 
 use_batch_normalization = True
-learning_rate = 0.0002 if not use_batch_normalization else 0.003
+learning_rate = 0.0002 if not use_batch_normalization else 0.001
 
 gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
 
@@ -89,7 +89,11 @@ disc_hyparams = {
 disc_weights,disc_biases = {},{}
 disc_BNgammas,disc_BNbetas = {},{}
 
+GenEMAMean,GenEMAVariance = {},{}
+DiscEMAMean,DiscEMAVariance = {},{}
+
 def create_generator_layers():
+    global GenEMAMean,GenEMAVariance
     print('Defining parameters ...')
 
     if use_batch_normalization:
@@ -123,21 +127,25 @@ def create_generator_layers():
                 gen_BNgammas[op] = tf.Variable(tf.truncated_normal([1,1,1,gen_hyparams[op]['weights'][2]],stddev=0.02),name='GenBatchNormGamma'+op)
                 gen_BNbetas[op] = tf.Variable(tf.truncated_normal([1,1,1,gen_hyparams[op]['weights'][2]],stddev=0.02),name='GenBatchNormBeta'+op)
 
+def batch_norm_gen(x, batch_size, op, is_train,decay):
+    global GenEMAMean,GenEMAVariance
 
-def batch_norm_gen(x, batch_size, op, is_train):
-    # X shape (batch_size,x,y,depth)
     if 'conv' in op:
-        x_mean,x_var = tf.nn.moments(x,[1,2,3],keep_dims=True)
+        # X shape (batch_size,x,y,depth)
+        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
     else:
-        x_mean,x_var = tf.nn.moments(x,[1],keep_dims=True)
+        # X shape (batch_size,activation_size)
+        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
 
     if is_train:
-        x_hat = (x - x_mean)/(tf.sqrt(x_var)+epsilon)
-        y = gen_BNgammas[op]*x_hat + gen_BNbetas[op]
-        return y
+        with tf.control_dependencies([GenEMAMean[op].assign((1.0-decay)*GenEMAMean[op]+decay*x_mean),
+                                      GenEMAVariance[op].assign((1.0-decay)*GenEMAVariance[op]+decay*x_var)]):
+            x_hat = (x - x_mean)/(tf.sqrt(x_var)+epsilon)
+            y = gen_BNgammas[op]*x_hat + gen_BNbetas[op]
+            return y
     else:
-        x_var = batch_size*x_var/(batch_size-1)
-        y = (gen_BNgammas[op]/tf.sqrt(x_var+epsilon))*x +(gen_BNbetas[op]-(gen_BNgammas[op]*x_mean/tf.sqrt(x_var+epsilon)))
+        glb_mean,glb_var = GenEMAMean[op],batch_size*GenEMAVariance[op]/(batch_size-1)
+        y = (gen_BNgammas[op]/tf.sqrt(glb_var+epsilon))*x +(gen_BNbetas[op]-(gen_BNgammas[op]*glb_mean/tf.sqrt(glb_var+epsilon)))
         return y
 
 def get_generator_output(dataset,is_train):
@@ -152,7 +160,12 @@ def get_generator_output(dataset,is_train):
 
     x = tf.matmul(x,gen_weights['fulcon_in'])
     if use_batch_normalization:
-        x = batch_norm_gen(x,batch_size,'fulcon_in',is_train)
+        if 'fulcon_in' not in GenEMAMean and 'fulcon_in' not in GenEMAVariance:
+            x_shp = x.get_shape().as_list()
+            GenEMAMean['fulcon_in'] = tf.Variable(tf.zeros([1,x_shp[1]],dtype=tf.float32),name='GEMAmeanFulconIn')
+            GenEMAVariance['fulcon_in'] = tf.Variable(tf.ones([1,x_shp[1]],dtype=tf.float32),name='GEMAvarianceFulconIn')
+
+        x = batch_norm_gen(x,batch_size,'fulcon_in',is_train,bn_decay)
 
     x = tf.nn.relu(x+gen_biases['fulcon_in'])
     x = tf.reshape(x,[batch_size,noise_projection_shape[0],noise_projection_shape[1],noise_projection_shape[2]])
@@ -167,8 +180,13 @@ def get_generator_output(dataset,is_train):
                 # The paper says it is enough to perform normalization on Wx instead of Wx+b
                 # because b cancels out anyway
                 if use_batch_normalization:
+                    if op not in GenEMAMean and op not in GenEMAVariance:
+                        x_shp = x.get_shape().as_list()
+                        GenEMAMean[op] = tf.Variable(tf.zeros([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='GEMAmean'+op)
+                        GenEMAVariance[op] = tf.Variable(tf.ones([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='GEMAvariance'+op)
+
                     # X shape (batch_size,x,y,depth)
-                    x = batch_norm_gen(x,batch_size,op,is_train)
+                    x = batch_norm_gen(x,batch_size,op,is_train,bn_decay)
                 x = tf.nn.relu(x + gen_biases[op])
             else:
                 print('\tUsing Tanh for last Layer %s'%op)
@@ -198,6 +216,7 @@ def optimize_generator(Gloss,Gvariables):
 DISCRIMINATOR FUNCTIONS
 =================================================================='''
 def create_discriminator_layers():
+    global DiscEMAMean,DiscEMAVariance
     print('Defining parameters ...')
 
     if use_batch_normalization:
@@ -225,6 +244,7 @@ def create_discriminator_layers():
                 disc_BNgammas[op] = tf.Variable(tf.truncated_normal([1,1,1,disc_hyparams[op]['weights'][3]],stddev=0.02),name='DiscBatchNormGamma'+op)
                 disc_BNbetas[op] = tf.Variable(tf.truncated_normal([1,1,1,disc_hyparams[op]['weights'][3]],stddev=0.02),name='DiscBatchNormBeta'+op)
 
+
 def update_discriminator_fulcon_in(fan_in):
     for op in disc_conv_ops:
         if 'fulcon_out' in op:
@@ -244,20 +264,23 @@ def lrelu(x, leak=0.2, name="lrelu"):
          f2 = 0.5 * (1 - leak)
          return f1 * x + f2 * abs(x)
 
-def batch_norm_disc(x, batch_size, op, is_train):
+def batch_norm_disc(x, batch_size, op, is_train, decay):
+    global DiscEMAMean,DiscEMAVariance
     # X shape (batch_size,x,y,depth)
     if 'conv' in op:
-        x_mean,x_var = tf.nn.moments(x,[1,2,3],keep_dims=True)
+        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
     else:
-        x_mean,x_var = tf.nn.moments(x,[1],keep_dims=True)
+        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
 
     if is_train:
-        x_hat = (x - x_mean)/(tf.sqrt(x_var)+epsilon)
-        y = disc_BNgammas[op]*x_hat + disc_BNbetas[op]
-        return y
+        with tf.control_dependencies([DiscEMAMean[op].assign((1.0-decay)*DiscEMAMean[op]+decay*x_mean),
+                                      DiscEMAVariance[op].assign((1.0-decay)*DiscEMAVariance[op]+decay*x_var)]):
+            x_hat = (x - x_mean)/(tf.sqrt(x_var)+epsilon)
+            y = disc_BNgammas[op]*x_hat + disc_BNbetas[op]
+            return y
     else:
-        x_var = batch_size*x_var/(batch_size-1)
-        y = (disc_BNgammas[op]/tf.sqrt(x_var+epsilon))*x +(disc_BNbetas[op]-(disc_BNgammas[op]*x_mean/tf.sqrt(x_var+epsilon)))
+        glb_mean,glb_var = DiscEMAMean[op],batch_size*DiscEMAVariance[op]/(batch_size-1)
+        y = (disc_BNgammas[op]/tf.sqrt(glb_var+epsilon))*x +(disc_BNbetas[op]-(disc_BNgammas[op]*glb_mean/tf.sqrt(glb_var+epsilon)))
         return y
 
 def get_discriminator_output(dataset,is_train):
@@ -276,8 +299,12 @@ def get_discriminator_output(dataset,is_train):
             # The paper says it is enough to perform normalization on Wx instead of Wx+b
             # because b cancels out anyway
             if use_batch_normalization:
+                if op not in DiscEMAMean and op not in DiscEMAVariance:
+                    x_shp = x.get_shape().as_list()
+                    DiscEMAMean[op] = tf.Variable(tf.zeros([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='DEMAmean'+op)
+                    DiscEMAVariance[op] = tf.Variable(tf.ones([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='DEMAvariance'+op)
                 # X shape (batch_size,x,y,depth)
-                x = batch_norm_disc(x, batch_size, op, is_train)
+                x = batch_norm_disc(x, batch_size, op, is_train,bn_decay)
 
             x = lrelu(x + disc_biases[op])
             print('\t\tX after %s:%s'%(op,x.get_shape().as_list()))
@@ -406,7 +433,7 @@ if __name__=='__main__':
 
         gVars = [v for v in tvars if v.name.startswith('Gen')]
         dVars = [v for v in tvars if v.name.startswith('Disc')]
-        assert len(gVars)+len(dVars)==len(tvars)
+
 
         GenOptimizeTF = optimize_generator(GLoss,gVars)
         DiscOptimizerTF = optimize_discriminator(DLoss,dVars)
@@ -458,13 +485,12 @@ if __name__=='__main__':
                 assert not np.isnan(lg)
 
                 if do_Doptimize:
-                    if np.random.random()<0.1:
+                    if np.random.random()<0.01:
                         session.run([DiscOptimizerSwappedTF], feed_dict=disc_feed_dict)
                         DoptCount += 1
                     else:
-                        if np.random.random()<0.9:
-                            session.run([DiscOptimizerTF], feed_dict=disc_feed_dict)
-                            DoptCount += 1
+                        session.run([DiscOptimizerTF], feed_dict=disc_feed_dict)
+                        DoptCount += 1
                 assert not np.isnan(ld)
 
                 if ld<0 or lg<0:
@@ -499,7 +525,7 @@ if __name__=='__main__':
                 assert not np.any(np.isnan(DoutReal))
                 if total_iterations % 100 == 0:
                     if np.mean(disc_losses)<0.15 and np.mean(gen_losses)>1.0:
-                        do_Doptimize= False
+                        do_Doptimize= True
                     else:
                         do_Doptimize=True
                     print('Minibatch GEN loss (%.3f) and DISC loss (%.3f) epoch,iteration %d,%d' % (np.mean(gen_losses),np.mean(disc_losses),epoch,iteration))
