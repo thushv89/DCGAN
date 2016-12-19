@@ -10,7 +10,7 @@ import os
 
 
 epsilon = 1e-8
-bn_decay = 0.5
+bn_decay = 0.25
 loss_epsilon = 1e-8
 
 dataset_type = 'cifar-10'
@@ -27,7 +27,7 @@ else:
     raise NotImplementedError
 
 batch_size = 128
-num_epochs = 100
+num_epochs = 101
 
 #dropout seems to be making it impossible to learn
 #maybe only works for large nets
@@ -91,6 +91,32 @@ disc_BNgammas,disc_BNbetas = {},{}
 
 GenEMAMean,GenEMAVariance = {},{}
 DiscEMAMean,DiscEMAVariance = {},{}
+
+'''
+===========================================================================
+                Network Architecture (Generator)
+---------------------------------------------------------------------------
+  BN(outFC,sizeFC)        BN(outC1,depthC1)  BN(outC1,depthC1)
+      V                              V             V
+Z - out(FC) - Reshape(out(FC)) - out(conv_1) - out(conv_2) - out(conv_3,Tanh)
+  ^                            ^             ^             ^
+W(fulcon_in)                W(conv_1)     W(conv_2)    W(conv_3)
+
+===========================================================================
+                Network Architecture (Discriminator)
+---------------------------------------------------------------------------
+    BN(outGen,deptC1) BN(outC2,depthC2) BN(outC3,depthC3)
+               V             V             V
+out(GEN) - out(conv_1) - out(conv_2) - out(conv_3) - Reshape(out(conv_3) - out(FC,sigmoid)
+         ^             ^             ^                                ^
+     W(conv_1)     W(conv_2)     W(conv_3)                       W(fulcon_out)
+===========================================================================
+'''
+
+
+'''=========================================================================
+GENERATOR FUNCTIONS
+========================================================================='''
 
 def create_generator_layers():
     global GenEMAMean,GenEMAVariance
@@ -427,11 +453,18 @@ if __name__=='__main__':
         DLossSwapped = calc_discriminator_loss(DLogitFakeTF,DLogitRealTF)
 
         tvars = tf.trainable_variables()
-        print([v.name for v in tvars])
 
         gVars = [v for v in tvars if v.name.startswith('Gen')]
         dVars = [v for v in tvars if v.name.startswith('Disc')]
-
+        print('='*80)
+        print('Variables')
+        print('Generator Trainable Variables')
+        print([v.name for v in gVars])
+        print()
+        print('Discriminator Trainable Variables')
+        print([v.name for v in dVars])
+        print('='*80)
+        print()
 
         GenOptimizeTF = optimize_generator(GLoss,gVars)
         DiscOptimizerTF = optimize_discriminator(DLoss,dVars)
@@ -483,7 +516,7 @@ if __name__=='__main__':
                 assert not np.isnan(lg)
 
                 if do_Doptimize:
-                    if np.random.random()<0.008:
+                    if np.random.random()<0.5/(epoch+1):
                         session.run([DiscOptimizerSwappedTF], feed_dict=disc_feed_dict)
                         DoptCount += 1
                     else:
