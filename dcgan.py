@@ -131,16 +131,18 @@ def batch_norm_gen(x, batch_size, op, is_train,decay):
     global GenEMAMean,GenEMAVariance
 
     if 'conv' in op:
+        # Fon conv layers, we want beta and gamma per FEATURE MAP not Activation
         # X shape (batch_size,x,y,depth)
-        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
+        x_mean,x_var = tf.nn.moments(x,[0,1,2],keep_dims=True)
     else:
+        # For fully connected, we want beta and gamma per activation
         # X shape (batch_size,activation_size)
         x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
 
     if is_train:
         with tf.control_dependencies([GenEMAMean[op].assign((1.0-decay)*GenEMAMean[op]+decay*x_mean),
                                       GenEMAVariance[op].assign((1.0-decay)*GenEMAVariance[op]+decay*x_var)]):
-            x_hat = (x - x_mean)/(tf.sqrt(x_var)+epsilon)
+            x_hat = (x - x_mean)/(tf.sqrt(x_var+epsilon))
             y = gen_BNgammas[op]*x_hat + gen_BNbetas[op]
             return y
     else:
@@ -162,8 +164,8 @@ def get_generator_output(dataset,is_train):
     if use_batch_normalization:
         if 'fulcon_in' not in GenEMAMean and 'fulcon_in' not in GenEMAVariance:
             x_shp = x.get_shape().as_list()
-            GenEMAMean['fulcon_in'] = tf.Variable(tf.zeros([1,x_shp[1]],dtype=tf.float32),name='GEMAmeanFulconIn')
-            GenEMAVariance['fulcon_in'] = tf.Variable(tf.ones([1,x_shp[1]],dtype=tf.float32),name='GEMAvarianceFulconIn')
+            GenEMAMean['fulcon_in'] = tf.Variable(tf.zeros([1,x_shp[1]],dtype=tf.float32),name='GEMAmean_fulcon_in')
+            GenEMAVariance['fulcon_in'] = tf.Variable(tf.ones([1,x_shp[1]],dtype=tf.float32),name='GEMAvariance_fulcon_in')
 
         x = batch_norm_gen(x,batch_size,'fulcon_in',is_train,bn_decay)
 
@@ -182,8 +184,8 @@ def get_generator_output(dataset,is_train):
                 if use_batch_normalization:
                     if op not in GenEMAMean and op not in GenEMAVariance:
                         x_shp = x.get_shape().as_list()
-                        GenEMAMean[op] = tf.Variable(tf.zeros([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='GEMAmean'+op)
-                        GenEMAVariance[op] = tf.Variable(tf.ones([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='GEMAvariance'+op)
+                        GenEMAMean[op] = tf.Variable(tf.zeros([1,1,1,x_shp[3]],dtype=tf.float32),name='GEMAmean_'+op)
+                        GenEMAVariance[op] = tf.Variable(tf.ones([1,1,1,x_shp[3]],dtype=tf.float32),name='GEMAvariance_'+op)
 
                     # X shape (batch_size,x,y,depth)
                     x = batch_norm_gen(x,batch_size,op,is_train,bn_decay)
@@ -218,10 +220,6 @@ DISCRIMINATOR FUNCTIONS
 def create_discriminator_layers():
     global DiscEMAMean,DiscEMAVariance
     print('Defining parameters ...')
-
-    if use_batch_normalization:
-        disc_BNgammas['input'] = tf.Variable(tf.truncated_normal([1,image_size,image_size,num_channels],stddev=0.02),name='DiscBatchNormGamma_input')
-        disc_BNbetas['input'] = tf.Variable(tf.truncated_normal([1,image_size,image_size,num_channels],stddev=0.02),name='DiscBatchNormBeta_input')
 
     for op in disc_conv_ops:
         if 'fulcon' in op:
@@ -268,7 +266,7 @@ def batch_norm_disc(x, batch_size, op, is_train, decay):
     global DiscEMAMean,DiscEMAVariance
     # X shape (batch_size,x,y,depth)
     if 'conv' in op:
-        x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
+        x_mean,x_var = tf.nn.moments(x,[0,1,2],keep_dims=True)
     else:
         x_mean,x_var = tf.nn.moments(x,[0],keep_dims=True)
 
@@ -301,8 +299,8 @@ def get_discriminator_output(dataset,is_train):
             if use_batch_normalization:
                 if op not in DiscEMAMean and op not in DiscEMAVariance:
                     x_shp = x.get_shape().as_list()
-                    DiscEMAMean[op] = tf.Variable(tf.zeros([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='DEMAmean'+op)
-                    DiscEMAVariance[op] = tf.Variable(tf.ones([1,x_shp[1],x_shp[2],x_shp[3]],dtype=tf.float32),name='DEMAvariance'+op)
+                    DiscEMAMean[op] = tf.Variable(tf.zeros([1,1,1,x_shp[3]],dtype=tf.float32),name='DEMAmean_'+op)
+                    DiscEMAVariance[op] = tf.Variable(tf.ones([1,1,1,x_shp[3]],dtype=tf.float32),name='DEMAvariance_'+op)
                 # X shape (batch_size,x,y,depth)
                 x = batch_norm_disc(x, batch_size, op, is_train,bn_decay)
 
@@ -485,7 +483,7 @@ if __name__=='__main__':
                 assert not np.isnan(lg)
 
                 if do_Doptimize:
-                    if np.random.random()<0.01:
+                    if np.random.random()<0.008:
                         session.run([DiscOptimizerSwappedTF], feed_dict=disc_feed_dict)
                         DoptCount += 1
                     else:
