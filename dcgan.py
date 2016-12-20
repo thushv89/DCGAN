@@ -7,7 +7,8 @@ import load_data
 import scipy.misc
 import scipy
 import os
-
+import logging
+import sys,getopt
 
 epsilon = 1e-8
 bn_decay = 0.25
@@ -27,7 +28,7 @@ else:
     raise NotImplementedError
 
 batch_size = 128
-num_epochs = 101
+num_epochs = 201
 
 #dropout seems to be making it impossible to learn
 #maybe only works for large nets
@@ -38,7 +39,7 @@ use_dropout = False
 z_size = 100
 
 use_batch_normalization = True
-learning_rate = 0.0002 if not use_batch_normalization else 0.001
+learning_rate = 0.0002 if not use_batch_normalization else 0.0002
 
 gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
 
@@ -121,10 +122,6 @@ GENERATOR FUNCTIONS
 def create_generator_layers():
     global GenEMAMean,GenEMAVariance
     print('Defining parameters ...')
-
-    if use_batch_normalization:
-        gen_BNgammas['input'] = tf.Variable(tf.truncated_normal([1,z_size],stddev=0.02),name='GenBatchNormGamma_input')
-        gen_BNbetas['input'] = tf.Variable(tf.truncated_normal([1,z_size],stddev=0.02),name='GenBatchNormBeta_input')
 
     for op in gen_conv_ops:
         if 'fulcon_in' in op:
@@ -235,10 +232,12 @@ def calc_generator_loss(DoutFake):
 
 def optimize_generator(Gloss,Gvariables):
     # Optimizer.
-    Goptimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.5).minimize(Gloss, var_list=Gvariables)
+    Goptimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.5)
+    grads = Goptimizer.compute_gradients(Gloss, var_list=Gvariables)
+    minimize_Gopt = Goptimizer.minimize(Gloss, var_list=Gvariables)
     #grad = optimizer.compute_gradients(gen_loss,variables)
     #update = optimizer.apply_gradients(grad)
-    return Goptimizer
+    return minimize_Gopt,grads
 
 '''==================================================================
 DISCRIMINATOR FUNCTIONS
@@ -368,11 +367,11 @@ def calc_discriminator_loss(DLogitReal,DLogitFake):
 def optimize_discriminator(Dloss,Dvariables):
     # Optimizer.
     #Doptimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate).minimize(Dloss, var_list=Dvariables)
-    Doptimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.5).minimize(Dloss, var_list=Dvariables)
-    #grad = optimizer.compute_gradients(loss,variables)
-    #update = optimizer.apply_gradients(grad)
-    #optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
-    return Doptimizer
+    Doptimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.5)
+    minimize_Dopt = Doptimizer.minimize(Dloss, var_list=Dvariables)
+    grad = Doptimizer.compute_gradients(Dloss,Dvariables)
+
+    return minimize_Dopt,grad
 
 def save_images(image, image_path):
     scipy.misc.imsave(image_path, inverse_transform(image))
@@ -390,6 +389,18 @@ if __name__=='__main__':
     global log_suffix,data_filename
     global total_iterations
 
+    debug_grads = True
+    try:
+        opts,args = getopt.getopt(
+            sys.argv[1:],"",['log_suffix='])
+    except getopt.GetoptError as err:
+        print('')
+
+    if len(opts)!=0:
+        for opt,arg in opts:
+            if opt == '--log_suffix':
+                log_suffix = arg
+
     image_save_directory='images_dir'
     if dataset_type=='cifar-10':
         #load_data.load_and_save_data_cifar10('cifar-10.pickle',zca_whiten=False)
@@ -397,12 +408,29 @@ if __name__=='__main__':
 
     graph = tf.Graph()
 
-    # Value logger will log info used to calculate policies
-    '''test_logger = logging.getLogger('test_logger_'+log_suffix)
-    test_logger.setLevel(logging.INFO)
-    fileHandler = logging.FileHandler('test_logger_'+log_suffix, mode='w')
-    fileHandler.setFormatter(logging.Formatter('%(message)s'))
-    test_logger.addHandler(fileHandler)'''
+    # Logging generator and discriminator loss
+    loss_logger = logging.getLogger('loss_logger_'+log_suffix)
+    loss_logger.setLevel(logging.INFO)
+    lossFileHandler = logging.FileHandler('loss_logger_'+log_suffix, mode='w')
+    lossFileHandler.setFormatter(logging.Formatter('%(message)s'))
+    loss_logger.addHandler(lossFileHandler)
+    loss_logger.info('#Epoch, Iteration, Gen Loss, Disc Loss')
+
+    if debug_grads:
+        # Gradient logger
+        grad_logger = logging.getLogger('grad_logger_'+log_suffix)
+        grad_logger.setLevel(logging.INFO)
+        gradFileHandler = logging.FileHandler('grad_logger_'+log_suffix, mode='w')
+        gradFileHandler.setFormatter(logging.Formatter('%(message)s'))
+        grad_logger.addHandler(gradFileHandler)
+
+        # Gradient Stat logger
+        gradStat_logger = logging.getLogger('gradStat_logger_'+log_suffix)
+        gradStat_logger.setLevel(logging.INFO)
+        gradStatFileHandler = logging.FileHandler('gradStat_logger_'+log_suffix, mode='w')
+        gradStatFileHandler.setFormatter(logging.Formatter('%(message)s'))
+        gradStat_logger.addHandler(gradStatFileHandler)
+        gradStat_logger.info('#Epoch,Iteration,Min,Max,flow_percentage')
 
     test_accuracies = []
     total_iterations = 0
@@ -466,9 +494,10 @@ if __name__=='__main__':
         print('='*80)
         print()
 
-        GenOptimizeTF = optimize_generator(GLoss,gVars)
-        DiscOptimizerTF = optimize_discriminator(DLoss,dVars)
-        DiscOptimizerSwappedTF = optimize_discriminator(DLossSwapped,dVars)
+        # Grad is a list of (gradient,variable) tuples for each variable in the passed variable list
+        GenOptimizeTF,GgradsTF = optimize_generator(GLoss,gVars)
+        DiscOptimizerTF,DgradsTF = optimize_discriminator(DLoss,dVars)
+        DiscOptimizerSwappedTF,Dswap_gradsTF = optimize_discriminator(DLossSwapped,dVars)
 
         tf.initialize_all_variables().run()
 
@@ -554,15 +583,37 @@ if __name__=='__main__':
                 assert not np.any(ld<0) and not np.any(lg<0)
                 assert not np.any(np.isnan(DoutFake))
                 assert not np.any(np.isnan(DoutReal))
-                if total_iterations % 100 == 0:
-                    if np.mean(disc_losses)<0.15 and np.mean(gen_losses)>1.0:
-                        do_Doptimize= True
-                    else:
-                        do_Doptimize=True
+                if total_iterations % 50 == 0:
+
+                    loss_logger.info('%d,%d,%.5f,%.5f',epoch,iteration,np.mean(gen_losses),np.mean(disc_losses))
                     print('Minibatch GEN loss (%.3f) and DISC loss (%.3f) epoch,iteration %d,%d' % (np.mean(gen_losses),np.mean(disc_losses),epoch,iteration))
                     print('\tGopt, Dopt: %d, %d'%(GoptCount,DoptCount))
                     GoptCount,DoptCount = 0,0
                     gen_losses,disc_losses = [],[]
+
+                    if debug_grads:
+                        Ggrads = session.run([g for g,v in GgradsTF if g is not None], feed_dict=gen_feed_dict)
+                        Ggrads = zip([v.name for g,v in GgradsTF if g is not None],Ggrads)
+                        Dgrads = session.run([g for g,v in DgradsTF if g is not None], feed_dict=disc_feed_dict)
+                        Dgrads = zip([v.name for g,v in DgradsTF if g is not None],Dgrads)
+
+                        grad_logger.info('#Generator Gradient')
+                        for v,g in Ggrads:
+                            gradStat_logger.info('Gen,%s,%d,%d,%.5f,%.5f,%.2f',v,epoch,iteration,np.min(g.flatten()),np.max(g.flatten()),
+                                                 len(list(np.where(g.flatten()>0.001)[0]))*100.0/g.flatten().size)
+                            grad_string = ''
+                            for val in g.flatten()[:100]:
+                                grad_string += '%.3f,'%val
+                            grad_logger.info('%s,%s',v,grad_string)
+
+                        grad_logger.info('#Discriminator Gradient')
+                        for v,g in Dgrads:
+                            gradStat_logger.info('Disc,%s,%d,%d,%.5f,%.5f,%.2f',v,epoch,iteration,np.min(g.flatten()),np.max(g.flatten()),
+                                                 len(list(np.where(g.flatten()>0.001)[0]))*100.0/g.flatten().size)
+                            grad_string = ''
+                            for val in g.flatten()[:100]:
+                                grad_string += '%.3f,'%val
+                            grad_logger.info('%s,%s',v,grad_string)
 
                 total_iterations += 1
                 prevDoutFakeNoSig = DoutFakeNoSigmoid
