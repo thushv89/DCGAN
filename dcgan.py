@@ -11,7 +11,7 @@ import logging
 import sys,getopt
 
 epsilon = 1e-8
-bn_decay = 0.25
+bn_decay = 0.5
 loss_epsilon = 1e-8
 
 dataset_type = 'wikiface'
@@ -42,8 +42,8 @@ use_dropout = False
 
 z_size = 100
 
-use_batch_normalization = True
-learning_rate = 0.0002 if not use_batch_normalization else 0.0001
+use_batch_normalization = False
+learning_rate = 0.0002 if not use_batch_normalization else 0.00005
 
 gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
 
@@ -444,7 +444,7 @@ if __name__=='__main__':
     if dataset_type=='wikiface':
         #load_data.load_and_save_data_cifar10('cifar-10.pickle',zca_whiten=False)
         fp1 = np.memmap('/home/tgan4199/DCGAN'+os.sep+'data'+os.sep+'wiki_faces'+os.sep+'wikiface_dataset', dtype=np.float32,mode='r',
-                                           offset=np.dtype('float32').itemsize*0,shape=(total_train_size//2,image_size,image_size,num_channels))
+                                           offset=np.dtype('float32').itemsize*1,shape=(batch_size*200,image_size,image_size,num_channels))
         full_train_dataset = fp1[:,:,:,:]
 
     graph = tf.Graph()
@@ -602,25 +602,27 @@ if __name__=='__main__':
                     print()
                     print(DoutRealNoSigmoid[:length])
 
-                '''if (DoutFake and np.any(np.isnan(DoutFake))) or (DoutReal and np.any(np.isnan(DoutReal))):
+                if np.any(np.isnan(DoutFake)) or np.any(np.isnan(DoutReal)):
                     length = 20
                     print('Detected NaN')
-                    print('Previous Discriminator (Fake) out (',epoch,' ',iteration,': ',prevDoutFakeNoSig[:length])
-                    print()
+                    if prevDoutFakeNoSig is not None:
+                        print('Previous Discriminator (Fake) out (',epoch,' ',iteration,': ',prevDoutFakeNoSig[:length])
+                        print()
                     print('Discriminator (Fake) out (',epoch,' ',iteration,': ',DoutFakeNoSigmoid[:length])
                     print()
                     print('Discriminator (Fake) Sigmoid out (',epoch,' ',iteration,': ',DoutFake[:length])
                     print()
-                    print('Previous Discriminator (Real) out (',epoch,' ',iteration,': ',prevDoutRealNoSig[:length])
-                    print()
+                    if prevDoutRealNoSig is not None:
+                        print('Previous Discriminator (Real) out (',epoch,' ',iteration,': ',prevDoutRealNoSig[:length])
+                        print()
                     print('Discriminator (Real) out (',epoch,' ',iteration,': ',DoutRealNoSigmoid[:length])
                     print()
-                    print('Discriminator (Real) Sigmoid out (',epoch,' ',iteration,': ',DoutReal[:length])'''
+                    print('Discriminator (Real) Sigmoid out (',epoch,' ',iteration,': ',DoutReal[:length])
 
                 #assert not np.any(ld<0) and not np.any(lg<0)
                 #assert not np.any(np.isnan(DoutFake))
                 #assert not np.any(np.isnan(DoutReal))
-                if total_iterations % 50 == 0:
+                if total_iterations % 1 == 0:
 
                     loss_logger.info('%d,%d,%.5f,%.5f',epoch,iteration,np.mean(gen_losses),np.mean(disc_losses))
                     print('Minibatch GEN loss (%.3f) and DISC loss (%.3f) epoch,iteration %d,%d' % (np.mean(gen_losses),np.mean(disc_losses),epoch,iteration))
@@ -661,11 +663,11 @@ if __name__=='__main__':
                 z_data = np.random.uniform(-1.0,1.0,size=[batch_size,z_size]).astype(np.float32)
                 gen_feed_dict = {tf_noise_dataset : z_data}
                 gen_images = session.run([gen_images_fn], feed_dict=gen_feed_dict)
-                '''for index,img in enumerate(batch_data[:10]):
+                for index,img in enumerate(batch_data[:10]):
                     if index<2:
                         print('Image Shape: %s'%str(img.shape))
                     filename = image_save_directory+os.sep+'real_'+str(epoch)+'_'+str(index)+'.png'
-                    save_images(img,filename)'''
+                    save_images(img,filename)
 
                 for index in range(10):
                     if index<2:
