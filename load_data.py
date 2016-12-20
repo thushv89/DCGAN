@@ -10,6 +10,132 @@ import xml.etree.ElementTree as ET
 from math import ceil,floor
 from scipy.misc import imsave
 
+def load_and_save_data_wikiface_with_memmap():
+    data_directory = "/home/tgan4199/DCGAN/data/wiki_faces/wiki_crop/"
+    data_save_directory = "/home/tgan4199/DCGAN/data/wiki_faces/"
+    resized_dimension = 192
+    num_channels = 3
+
+    train_subdirectories = [os.path.split(x[0])[1] for x in os.walk(data_directory)][1:]
+    print('Subdirectories: %s\n'%train_subdirectories[:5])
+
+    train_size = 0
+    train_filenames = []
+    for subdir in train_subdirectories:
+        file_count = len([file for file in os.listdir(data_directory+os.sep+subdir) if file.endswith('.jpg')])
+        train_filenames.extend([subdir+os.sep+file for file in os.listdir(data_directory+os.sep+subdir) if file.endswith('.jpg')])
+        train_size += file_count
+    np.random.shuffle(train_filenames)
+
+    # ignoring the 0th element because it is just a space
+    # we use a shuffled train set when storing to avoid any order
+
+    # resize image
+    # if the resize size is more than the actual size, we pad with zeros
+    # if the image is black and white, we create 3 channels of same data
+    def resize_image(fname):
+        im = Image.open(fname)
+        im.thumbnail((resized_dimension,resized_dimension), Image.ANTIALIAS)
+        resized_img = np.array(im)
+
+        if resized_img.ndim<3:
+            resized_img = resized_img.reshape((resized_img.shape[0],resized_img.shape[1],1))
+            resized_img = np.repeat(resized_img,3,axis=2)
+            assert resized_img.shape[2]==num_channels
+        if resized_img.shape[0]<resized_dimension:
+            diff = resized_dimension - resized_img.shape[0]
+            lpad,rpad = floor(float(diff)/2.0),ceil(float(diff)/2.0)
+            #print('\tshape of resized img before padding %s'%str(resized_img.shape))
+            resized_img = np.pad(resized_img,((lpad,rpad),(0,0),(0,0)),'constant',constant_values=((0,0),(0,0),(0,0)))
+            #print('\tshape of resized img after padding %s'%str(resized_img.shape))
+        if resized_img.shape[1]<resized_dimension:
+            diff = resized_dimension - resized_img.shape[1]
+            lpad,rpad = floor(float(diff)/2.0),ceil(float(diff)/2.0)
+            #print('\tshape of resized img before padding %s'%str(resized_img.shape))
+            resized_img = np.pad(resized_img,((0,0),(lpad,rpad),(0,0)),'constant',constant_values=((0,0),(0,0),(0,0)))
+            #print('\tshape of resized img after padding %s'%str(resized_img.shape))
+        assert resized_img.shape[0]==resized_dimension
+        assert resized_img.shape[1]==resized_dimension
+        #assert resized_img.shape[2]==num_channels
+        return resized_img
+
+    filesize_dictionary = {}
+    print('Found %d training samples in %d subdirectories...\n'%(train_size,len(train_subdirectories)))
+    assert train_size>0
+
+    if not os.path.exists(data_save_directory+'wikiface_dataset'):
+        dataset_filename = data_save_directory+'wikiface_dataset'
+        fp1 = np.memmap(filename=dataset_filename, dtype='float32', mode='w+', shape=(train_size,resized_dimension,resized_dimension,num_channels))
+        print("\tmemory allocated for (%d items)..."%train_size)
+        filesize_dictionary['imagenet_small_train_dataset'] = train_size
+
+        print('Creating train dataset ...')
+        pixel_depth = -1
+        train_offset = 0
+        train_label_index = -1
+
+        for file in train_filenames:
+            print('Processing file %s (%d)'%(file,train_offset))
+            if train_offset % int(len(train_filenames)*0.05)==0:
+                print('\t%d%% complete'%(train_offset//int(len(train_filenames)*100.0)))
+
+            subdir = os.path.split(file)[0]
+            if train_label_index < 1:
+                print('An example subdir %s'%subdir)
+                print('Processing File %s'%file)
+
+            #image_data = ndimage.imread(subdir+os.sep+file).astype(float)
+            resized_img = resize_image(data_directory+os.sep+file)
+            # probably has an alpha layer, ignore these kind of images
+            if resized_img.ndim==3 and resized_img.shape[2]>num_channels:
+                print('Ignoring image %s of size %s'%(file,str(resized_img.shape)))
+                continue
+            if pixel_depth == -1:
+                pixel_depth = 255.0 if np.max(resized_img)>128 else 1.0
+                print('\tFound pixel depth %.1f'%pixel_depth)
+            #resized_img = resized_img.flatten()
+            resized_img = (resized_img - np.mean(resized_img))/np.std(resized_img)
+            if train_offset<5:
+                print('mean 0th item %.3f'%np.mean(resized_img))
+                assert -.1<np.mean(resized_img)<.1
+                print('stddev 0th item %.3f'%np.std(resized_img))
+                assert 0.9<np.std(resized_img)<1.1
+            fp1[train_offset,:,:,:] = resized_img
+            train_offset += 1
+
+
+        print('Training data finished...')
+
+    else:
+        print('Training data exists. Not recreating...')
+
+    with open(data_save_directory+'dataset_sizes.pickle','wb') as f:
+        pickle.dump(filesize_dictionary, f, pickle.HIGHEST_PROTOCOL)
+
+memmap_offset=-1
+def get_next_memmap_indices(chunk_size,dataset_size):
+    global memmap_offset
+
+    if memmap_offset == -1:
+        memmap_offset = 0
+
+    if memmap_offset>=dataset_size:
+        print('Resetting memmap offset...\n')
+        memmap_offset = 0
+
+    # e.g if dataset_size=10, offset=4 chunk_size=5
+    if memmap_offset+chunk_size<=dataset_size-1:
+        prev_offset = memmap_offset
+        memmap_offset = memmap_offset+chunk_size
+        return prev_offset,memmap_offset
+
+    # e.g. if dataset_size = 10 offset=7 chunk_size=5
+    # data from last => (10-1) - 7
+    else:
+        prev_offset = memmap_offset
+        memmap_offset = dataset_size
+        return prev_offset,memmap_offset
+
 def load_and_save_data_cifar10(filename,**params):
 
     valid_size_required = 10000
