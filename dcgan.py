@@ -42,7 +42,7 @@ use_dropout = False
 
 z_size = 100
 
-use_batch_normalization = False
+use_batch_normalization = True
 learning_rate = 0.0002 if not use_batch_normalization else 0.00005
 
 gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
@@ -490,7 +490,12 @@ if __name__=='__main__':
 
 
         train_dataset = full_train_dataset
-
+        train_delcount = 0
+        for i in range(train_dataset.shape[0]):
+            if np.any(np.isnan(train_dataset[i,:,:,:])):
+                train_dataset = np.delete(train_dataset,i,axis=0)
+                train_delcount += 1
+        print('Train %d entries deleted'%train_delcount)
 
         train_size = train_dataset.shape[0]
 
@@ -564,6 +569,9 @@ if __name__=='__main__':
                 assert offset < train_size
                 batch_data = train_dataset[offset:offset + batch_size, :, :, :]
 
+                assert not np.any(np.isnan(batch_data[i,:,:,:]))
+                assert not np.min(batch_data)<-1.1
+                assert not np.max(batch_data)>1.1
                 z_data = np.random.uniform(-1.0,1.0,size=[batch_size,z_size]).astype(np.float32)
 
                 gen_feed_dict = {tf_noise_dataset : z_data}
