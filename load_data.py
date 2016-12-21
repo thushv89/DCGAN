@@ -13,7 +13,7 @@ from scipy.misc import imsave
 def load_and_save_data_wikiface_with_memmap():
     data_directory = "/home/tgan4199/DCGAN/data/wiki_faces/wiki_crop/"
     data_save_directory = "/home/tgan4199/DCGAN/data/wiki_faces/"
-    resized_dimension = 192
+    resized_dimension = 96
     num_channels = 3
 
     train_subdirectories = [os.path.split(x[0])[1] for x in os.walk(data_directory)][1:]
@@ -35,9 +35,10 @@ def load_and_save_data_wikiface_with_memmap():
     # if the image is black and white, we create 3 channels of same data
     def resize_image(fname):
         im = Image.open(fname)
-        im.thumbnail((resized_dimension,resized_dimension), Image.ANTIALIAS)
+        if im.size[0]>resized_dimension or im.size[1]>resized_dimension:
+            im.thumbnail((resized_dimension,resized_dimension), Image.ANTIALIAS)
         resized_img = np.array(im)
-
+        assert not np.any(np.isnan(im))
         if resized_img.ndim<3:
             resized_img = resized_img.reshape((resized_img.shape[0],resized_img.shape[1],1))
             resized_img = np.repeat(resized_img,3,axis=2)
@@ -86,6 +87,7 @@ def load_and_save_data_wikiface_with_memmap():
 
             #image_data = ndimage.imread(subdir+os.sep+file).astype(float)
             resized_img = resize_image(data_directory+os.sep+file)
+            assert not np.any(np.isnan(resized_img))
             # probably has an alpha layer, ignore these kind of images
             if resized_img.ndim==3 and resized_img.shape[2]>num_channels:
                 print('Ignoring image %s of size %s'%(file,str(resized_img.shape)))
@@ -94,7 +96,10 @@ def load_and_save_data_wikiface_with_memmap():
                 pixel_depth = 255.0 if np.max(resized_img)>128 else 1.0
                 print('\tFound pixel depth %.1f'%pixel_depth)
             #resized_img = resized_img.flatten()
+            if np.std(resized_img)<0.001:
+                continue
             resized_img = (resized_img - np.mean(resized_img))/np.std(resized_img)
+            assert not np.any(np.isnan(resized_img))
             if train_offset<5:
                 print('mean 0th item %.3f'%np.mean(resized_img))
                 assert -.1<np.mean(resized_img)<.1
@@ -111,6 +116,8 @@ def load_and_save_data_wikiface_with_memmap():
 
     with open(data_save_directory+'dataset_sizes.pickle','wb') as f:
         pickle.dump(filesize_dictionary, f, pickle.HIGHEST_PROTOCOL)
+
+#load_and_save_data_wikiface_with_memmap()
 
 memmap_offset=-1
 def get_next_memmap_indices(chunk_size,dataset_size):

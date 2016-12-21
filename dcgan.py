@@ -25,9 +25,9 @@ elif dataset_type=='imagenet':
     num_labels = 100
     num_channels = 3 # grayscale
 elif dataset_type=='wikiface':
-    image_size = 192
+    image_size = 96
     num_channels = 3
-    total_train_size = 62327
+    total_train_size = 54256
 else:
     raise NotImplementedError
 
@@ -43,12 +43,12 @@ use_dropout = False
 z_size = 100
 
 use_batch_normalization = True
-learning_rate = 0.0002 if not use_batch_normalization else 0.00005
+learning_rate = 0.0002 if not use_batch_normalization else 0.001
 
-gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
 
 if dataset_type=='cifar-10':
     #number of feature maps for each convolution layer
+    gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3']
     gen_depth_conv = {'conv_1':256,'conv_2':128,'conv_3':64}
 
     noise_projection_shape = (4,4,512)
@@ -66,14 +66,16 @@ if dataset_type=='cifar-10':
 
 elif dataset_type=='wikiface':
     #number of feature maps for each convolution layer
-    gen_depth_conv = {'conv_1':256,'conv_2':128,'conv_3':64}
+    gen_conv_ops = ['fulcon_in','conv_1','conv_2','conv_3','conv_4']
+    gen_depth_conv = {'conv_1':512,'conv_2':256,'conv_3':128}
 
-    noise_projection_shape = (4,4,512)
+    noise_projection_shape = (4,4,1024)
     #weights (conv): [width,height,in_depth,out_depth]
     #kernel (pool): [_,width,height,_]
-    gen_conv_1_hyparams = {'weights':[5,5,gen_depth_conv['conv_1'],noise_projection_shape[2]],'stride':[1,2,2,1],'padding':'SAME','out_size':[batch_size,8,8,gen_depth_conv['conv_1']]}
-    gen_conv_2_hyparams = {'weights':[5,5,gen_depth_conv['conv_2'],gen_depth_conv['conv_1']],'stride':[1,4,4,1],'padding':'SAME','out_size':[batch_size,32,32,gen_depth_conv['conv_2']]}
-    gen_conv_3_hyparams = {'weights':[5,5,num_channels,gen_depth_conv['conv_2']],'stride':[1,6,6,1],'padding':'SAME','out_size':[batch_size,192,192,num_channels]}
+    gen_conv_1_hyparams = {'weights':[3,3,gen_depth_conv['conv_1'],noise_projection_shape[2]],'stride':[1,2,2,1],'padding':'SAME','out_size':[batch_size,8,8,gen_depth_conv['conv_1']]}
+    gen_conv_2_hyparams = {'weights':[3,3,gen_depth_conv['conv_2'],gen_depth_conv['conv_1']],'stride':[1,2,2,1],'padding':'SAME','out_size':[batch_size,16,16,gen_depth_conv['conv_2']]}
+    gen_conv_3_hyparams = {'weights':[5,5,gen_depth_conv['conv_3'],gen_depth_conv['conv_2']],'stride':[1,2,2,1],'padding':'SAME','out_size':[batch_size,32,32,gen_depth_conv['conv_3']]}
+    gen_conv_4_hyparams = {'weights':[5,5,num_channels,gen_depth_conv['conv_3']],'stride':[1,3,3,1],'padding':'SAME','out_size':[batch_size,96,96,num_channels]}
 
     pool_large_hyperparams = {'type':'avg','kernel':[1,5,5,1],'stride':[1,1,1,1],'padding':'SAME'}
 
@@ -83,7 +85,8 @@ elif dataset_type=='wikiface':
 
 
 gen_hyparams = {
-    'fulcon_in':fulcon_in_hyparams,'conv_1': gen_conv_1_hyparams, 'conv_2': gen_conv_2_hyparams, 'conv_3':gen_conv_3_hyparams,
+    'fulcon_in':fulcon_in_hyparams,'conv_1': gen_conv_1_hyparams, 'conv_2': gen_conv_2_hyparams,
+    'conv_3':gen_conv_3_hyparams,'conv_4':gen_conv_4_hyparams,
     'fulcon_out':out_hyparams,'pool_large':pool_large_hyperparams
 }
 
@@ -91,9 +94,10 @@ gen_weights,gen_biases = {},{}
 gen_BNgammas,gen_BNbetas = {},{}
 
 #=============================================================================================================================
-disc_conv_ops = ['conv_1','conv_2','conv_3','fulcon_out']
+
 
 if dataset_type=='cifar-10':
+    disc_conv_ops = ['conv_1','conv_2','conv_3','fulcon_out']
     #number of feature maps for each convolution layer
     disc_depth_conv = {'conv_1':64,'conv_2':128,'conv_3':256}
 
@@ -109,18 +113,22 @@ if dataset_type=='cifar-10':
         'conv_1': disc_conv_1_hyparams, 'conv_2': disc_conv_2_hyparams, 'conv_3':disc_conv_3_hyparams, 'fulcon_out':out_hyparams
     }
 elif dataset_type=='wikiface':
-    disc_depth_conv = {'conv_1':64,'conv_2':128,'conv_3':256}
+    disc_conv_ops = ['conv_1','conv_2','conv_3','conv_4','fulcon_out']
+    disc_depth_conv = {'conv_1':128,'conv_2':256,'conv_3':512,'conv_4':1024}
 
     #weights (conv): [width,height,in_depth,out_depth]
     #kernel (pool): [_,width,height,_]
-    disc_conv_1_hyparams = {'weights':[5,5,num_channels,disc_depth_conv['conv_1']],'stride':[1,6,6,1],'padding':'SAME'} #192/6 = 32
-    disc_conv_2_hyparams = {'weights':[5,5,disc_depth_conv['conv_1'],disc_depth_conv['conv_2']],'stride':[1,4,4,1],'padding':'SAME'} #32/4=8
-    disc_conv_3_hyparams = {'weights':[3,3,disc_depth_conv['conv_2'],disc_depth_conv['conv_3']],'stride':[1,2,2,1],'padding':'SAME'} #8/2=4
+    disc_conv_1_hyparams = {'weights':[5,5,num_channels,disc_depth_conv['conv_1']],'stride':[1,3,3,1],'padding':'SAME'} #96/3 = 32
+    disc_conv_2_hyparams = {'weights':[5,5,disc_depth_conv['conv_1'],disc_depth_conv['conv_2']],'stride':[1,2,2,1],'padding':'SAME'} #32/2=16
+    disc_conv_3_hyparams = {'weights':[3,3,disc_depth_conv['conv_2'],disc_depth_conv['conv_3']],'stride':[1,2,2,1],'padding':'SAME'} #16/2=8
+    disc_conv_4_hyparams = {'weights':[3,3,disc_depth_conv['conv_3'],disc_depth_conv['conv_4']],'stride':[1,2,2,1],'padding':'SAME'} #8/2=4
 
     # fully connected layer hyperparameters
     out_hyparams = {'in':0,'out':1}
     disc_hyparams = {
-        'conv_1': disc_conv_1_hyparams, 'conv_2': disc_conv_2_hyparams, 'conv_3':disc_conv_3_hyparams, 'fulcon_out':out_hyparams
+        'conv_1': disc_conv_1_hyparams, 'conv_2': disc_conv_2_hyparams,
+        'conv_3':disc_conv_3_hyparams, 'conv_4': disc_conv_4_hyparams,
+        'fulcon_out':out_hyparams
     }
 
 disc_weights,disc_biases = {},{}
@@ -444,7 +452,7 @@ if __name__=='__main__':
     if dataset_type=='wikiface':
         #load_data.load_and_save_data_cifar10('cifar-10.pickle',zca_whiten=False)
         fp1 = np.memmap('/home/tgan4199/DCGAN'+os.sep+'data'+os.sep+'wiki_faces'+os.sep+'wikiface_dataset', dtype=np.float32,mode='r',
-                                           offset=np.dtype('float32').itemsize*1,shape=(batch_size*200,image_size,image_size,num_channels))
+                                           offset=np.dtype('float32').itemsize*0,shape=(batch_size*300,image_size,image_size,num_channels))
         full_train_dataset = fp1[:,:,:,:]
 
     graph = tf.Graph()
@@ -476,7 +484,7 @@ if __name__=='__main__':
     test_accuracies = []
     total_iterations = 0
 
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.6)
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.65)
     with tf.Session(graph=graph,
                     config=tf.ConfigProto(allow_soft_placement=True,gpu_options=gpu_options)) as session, \
             tf.device('/gpu:0'):
@@ -491,11 +499,11 @@ if __name__=='__main__':
 
         train_dataset = full_train_dataset
         train_delcount = 0
-        for i in range(train_dataset.shape[0]):
+        '''for i in range(train_dataset.shape[0]):
             if np.any(np.isnan(train_dataset[i,:,:,:])):
                 train_dataset = np.delete(train_dataset,i,axis=0)
                 train_delcount += 1
-        print('Train %d entries deleted'%train_delcount)
+        print('Train %d entries deleted'%train_delcount)'''
 
         train_size = train_dataset.shape[0]
 
@@ -568,10 +576,8 @@ if __name__=='__main__':
                 offset = iteration * batch_size
                 assert offset < train_size
                 batch_data = train_dataset[offset:offset + batch_size, :, :, :]
+                assert not np.any(np.isnan(batch_data))
 
-                assert not np.any(np.isnan(batch_data[i,:,:,:]))
-                assert not np.min(batch_data)<-1.1
-                assert not np.max(batch_data)>1.1
                 z_data = np.random.uniform(-1.0,1.0,size=[batch_size,z_size]).astype(np.float32)
 
                 gen_feed_dict = {tf_noise_dataset : z_data}
@@ -587,16 +593,16 @@ if __name__=='__main__':
                 for _ in range(2):
                     session.run([GenOptimizeTF], feed_dict=gen_feed_dict)
                     GoptCount += 1
-                #assert not np.isnan(lg)
+
 
                 if do_Doptimize:
                     if np.random.random()<0.5/(epoch+1):
                         session.run([DiscOptimizerSwappedTF], feed_dict=disc_feed_dict)
                         DoptCount += 1
                     else:
-                        session.run([DiscOptimizerTF], feed_dict=disc_feed_dict)
-                        DoptCount += 1
-                #assert not np.isnan(ld)
+                        if lg/ld<10.0 or np.random.random()<0.05:
+                            session.run([DiscOptimizerTF], feed_dict=disc_feed_dict)
+                            DoptCount += 1
 
                 if ld<0 or lg<0:
                     length = 20
@@ -610,8 +616,8 @@ if __name__=='__main__':
                     print()
                     print(DoutRealNoSigmoid[:length])
 
-                if np.any(np.isnan(DoutFake)) or np.any(np.isnan(DoutReal)):
-                    length = 20
+                if np.any(np.isnan(DoutFake)) or np.any(np.isnan(DoutReal)) or lg is None or ld is None:
+                    length = 10
                     print('Detected NaN')
                     if prevDoutFakeNoSig is not None:
                         print('Previous Discriminator (Fake) out (',epoch,' ',iteration,': ',prevDoutFakeNoSig[:length])
@@ -627,10 +633,12 @@ if __name__=='__main__':
                     print()
                     print('Discriminator (Real) Sigmoid out (',epoch,' ',iteration,': ',DoutReal[:length])
 
-                #assert not np.any(ld<0) and not np.any(lg<0)
-                #assert not np.any(np.isnan(DoutFake))
-                #assert not np.any(np.isnan(DoutReal))
-                if total_iterations % 1 == 0:
+                assert not np.isnan(lg)
+                assert not np.isnan(ld)
+                assert not np.any(ld<0) and not np.any(lg<0)
+                assert not np.any(np.isnan(DoutFake))
+                assert not np.any(np.isnan(DoutReal))
+                if total_iterations % 50 == 0:
 
                     loss_logger.info('%d,%d,%.5f,%.5f',epoch,iteration,np.mean(gen_losses),np.mean(disc_losses))
                     print('Minibatch GEN loss (%.3f) and DISC loss (%.3f) epoch,iteration %d,%d' % (np.mean(gen_losses),np.mean(disc_losses),epoch,iteration))
@@ -671,11 +679,11 @@ if __name__=='__main__':
                 z_data = np.random.uniform(-1.0,1.0,size=[batch_size,z_size]).astype(np.float32)
                 gen_feed_dict = {tf_noise_dataset : z_data}
                 gen_images = session.run([gen_images_fn], feed_dict=gen_feed_dict)
-                for index,img in enumerate(batch_data[:10]):
+                '''for index,img in enumerate(batch_data[:10]):
                     if index<2:
                         print('Image Shape: %s'%str(img.shape))
                     filename = image_save_directory+os.sep+'real_'+str(epoch)+'_'+str(index)+'.png'
-                    save_images(img,filename)
+                    save_images(img,filename)'''
 
                 for index in range(10):
                     if index<2:
